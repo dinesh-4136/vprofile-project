@@ -1,67 +1,52 @@
 pipeline {
-    
-	agent any
-/*	
-	tools {
-        maven "maven3"
+    agent any
+
+    tools {
+        jdk 'jdk-17'
+        maven 'maven'
     }
-*/	
+
     environment {
-        NEXUS_VERSION = "nexus3"
-        NEXUS_PROTOCOL = "http"
-        NEXUS_URL = "172.31.40.209:8081"
-        NEXUS_REPOSITORY = "vprofile-release"
-	NEXUS_REPO_ID    = "vprofile-release"
-        NEXUS_CREDENTIAL_ID = "nexuslogin"
-        ARTVERSION = "${env.BUILD_ID}"
+        NEXUS_VERSION        = "nexus3"
+        NEXUS_PROTOCOL       = "http"
+        NEXUS_URL            = "65.2.152.228:8081"
+        NEXUS_REPOSITORY     = "my-artifact"
+        NEXUS_CREDENTIAL_ID  = "Nexus-Credentials"
+        ARTVERSION           = "${BUILD_ID}"
+        DOCKER_IMAGE_NAME    = "dinesh4136/vprofile"
+        DOCKER_IMAGE_TAG     = "${BUILD_NUMBER}"
     }
-	
-    stages{
-        
-        stage('BUILD'){
+
+    stages {
+
+        stage('Clean Workspace') {
             steps {
-                sh 'mvn clean install -DskipTests'
-            }
-            post {
-                success {
-                    echo 'Now Archiving...'
-                    archiveArtifacts artifacts: '**/target/*.war'
-                }
+                sh '''
+                    echo "Cleaning up Docker and workspace..."
+                    docker system prune -af || true
+                    rm -rf /tmp/trivy* || true
+                    df -h
+                '''
             }
         }
 
-	stage('UNIT TEST'){
+        stage('Git Checkout') {
             steps {
-                sh 'mvn test'
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'GitHub-Credentials', url: 'https://github.com/dinesh-4136/vprofile-project.git']])
             }
         }
 
-	stage('INTEGRATION TEST'){
+        stage('Maven Build') {
             steps {
-                sh 'mvn verify -DskipUnitTests'
-            }
-        }
-		
-        stage ('CODE ANALYSIS WITH CHECKSTYLE'){
-            steps {
-                sh 'mvn checkstyle:checkstyle'
-            }
-            post {
-                success {
-                    echo 'Generated Analysis Result'
-                }
+                sh 'mvn clean package'
             }
         }
 
-        stage('CODE ANALYSIS with SONARQUBE') {
-          
-		  environment {
-             scannerHome = tool 'sonarscanner4'
-          }
-
-          steps {
-            withSonarQubeEnv('sonar-pro') {
-               sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
+        stage('Code Quality with Sonar') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    // sh 'mvn sonar:sonar'
+		    sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
                    -Dsonar.projectName=vprofile-repo \
                    -Dsonar.projectVersion=1.0 \
                    -Dsonar.sources=src/ \
@@ -69,53 +54,88 @@ pipeline {
                    -Dsonar.junit.reportsPath=target/surefire-reports/ \
                    -Dsonar.jacoco.reportsPath=target/jacoco.exec \
                    -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
-            }
-
-            timeout(time: 10, unit: 'MINUTES') {
-               waitForQualityGate abortPipeline: true
-            }
-          }
-        }
-
-        stage("Publish to Nexus Repository Manager") {
-            steps {
-                script {
-                    pom = readMavenPom file: "pom.xml";
-                    filesByGlob = findFiles(glob: "target/*.${pom.packaging}");
-                    echo "${filesByGlob[0].name} ${filesByGlob[0].path} ${filesByGlob[0].directory} ${filesByGlob[0].length} ${filesByGlob[0].lastModified}"
-                    artifactPath = filesByGlob[0].path;
-                    artifactExists = fileExists artifactPath;
-                    if(artifactExists) {
-                        echo "*** File: ${artifactPath}, group: ${pom.groupId}, packaging: ${pom.packaging}, version ${pom.version} ARTVERSION";
-                        nexusArtifactUploader(
-                            nexusVersion: NEXUS_VERSION,
-                            protocol: NEXUS_PROTOCOL,
-                            nexusUrl: NEXUS_URL,
-                            groupId: pom.groupId,
-                            version: ARTVERSION,
-                            repository: NEXUS_REPOSITORY,
-                            credentialsId: NEXUS_CREDENTIAL_ID,
-                            artifacts: [
-                                [artifactId: pom.artifactId,
-                                classifier: '',
-                                file: artifactPath,
-                                type: pom.packaging],
-                                [artifactId: pom.artifactId,
-                                classifier: '',
-                                file: "pom.xml",
-                                type: "pom"]
-                            ]
-                        );
-                    } 
-		    else {
-                        error "*** File: ${artifactPath}, could not be found";
-                    }
+                }
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
+        stage('Upload Artifact to Nexus') {
+            steps {
+                nexusArtifactUploader(
+                    nexusVersion: "${NEXUS_VERSION}",
+                    protocol: "${NEXUS_PROTOCOL}",
+                    nexusUrl: "${NEXUS_URL}",
+                    version: "${ARTVERSION}",
+                    groupId: "com.vprofile",
+                    repository: "${NEXUS_REPOSITORY}",
+                    credentialsId: "${NEXUS_CREDENTIAL_ID}",
+                    artifacts: [[
+                        artifactId: "vprofile",
+                        classifier: "",
+                        file: "target/vprofile-v2.war",
+                        type: "war"
+                    ]]
+                )
+            }
+        }
 
+        stage('Docker Build') {
+            steps {
+                echo "Building Docker image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ."
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                echo "Scanning Docker image with Trivy: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                sh '''
+                    IMAGE_NAME="${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                    echo "Scanning image: $IMAGE_NAME"
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v $HOME/.cache/trivy:/root/.cache/ \
+                        -v $WORKSPACE:/app \
+                        aquasec/trivy:latest \
+                        image --exit-code 0 --severity CRITICAL,HIGH \
+                        -f json -o /app/trivy-report.json \
+                        "$IMAGE_NAME"
+                '''
+                sh 'ls -lh trivy-report.json'
+            }
+        }
+        
+        stage('Docker Push') {
+            steps {
+                script {
+                    echo "Logging into Docker Registry and pushing image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                    docker.withRegistry('https://index.docker.io/v1/', 'DockerHub-Credentials') {
+                        def image = docker.build("${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
+                        image.push()
+                    }
+                }
+            }
+        }
     }
 
+    post {
+        always {
+            echo 'Archiving Trivy report and sending Slack notification...'
+            archiveArtifacts artifacts: 'trivy-report.json'
 
+            slackSend (
+                channel: '#devops-aws-jenkins',
+                color: currentBuild.currentResult == 'SUCCESS' ? 'good' : 'danger',
+                message: """\
+                    *${currentBuild.currentResult}*: Job <${env.BUILD_URL}|${env.JOB_NAME} #${env.BUILD_NUMBER}*
+                    *Branch*: ${env.GIT_BRANCH ?: 'N/A'}
+                    *Commit*: ${env.GIT_COMMIT ?: 'N/A'}
+                    *Duration*: ${currentBuild.durationString}
+                    *Details*: <${env.BUILD_URL}|Click to view console log>
+                    """.stripIndent()
+            )
+        }
+    }
 }
