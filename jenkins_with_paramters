@@ -1,0 +1,154 @@
+pipeline {
+    agent any
+    
+    parameters {
+        booleanParam(name: 'RUN_PIPELINE', defaultValue: true, description: 'Check to run the pipeline. Uncheck to skip')
+        credentials(name: 'GIT_CREDENTIALS', defaultValue: 'GitHub-Credentials', description: 'Git credentials for repository access')
+        choice(name: 'MAVEN_GOAL', choices: ['validate', 'compile', 'test', 'package'], description: 'Select Maven goal to run.')
+        booleanParam(name: 'UPLOAD_TO_NEXUS', defaultValue: 'true', description: 'Check to upload artifact to Nexus. Uncheck to skip.')
+        string(name: 'DOCKER_IMAGE_NAME_PARAM', defaultValue: 'dinesh4136/myapp', description: 'Docker image name (e.g., username/repo)')
+        string(name: 'DOCKER_IMAGE_TAG_PARAM', defaultValue: 'latest', description: 'Docker image tag (e.g., v1.0, latest)')
+        credentials(name: 'DOCKERHUB_CREDENTIALS', defaultValue: 'DockerHub-Credentials', description: 'DockerHub credentials ID')
+    }
+    
+    tools {
+        jdk 'jdk-17'
+        maven 'maven'
+    }
+    
+    environment {
+	    scannerHome 	     = tool 'sonar'
+        NEXUS_VERSION        = "nexus3"
+        NEXUS_PROTOCOL       = "http"
+        NEXUS_URL            = "65.2.152.228:8081"
+        NEXUS_REPOSITORY     = "my-artifact"
+        NEXUS_CREDENTIAL_ID  = "Nexus-Credentials"
+        ARTVERSION           = "${BUILD_ID}"
+        DOCKER_IMAGE_NAME    = "${params.DOCKER_IMAGE_NAME_PARAM}"
+        DOCKER_IMAGE_TAG     = "${params.DOCKER_IMAGE_TAG_PARAM}"
+    }
+    
+    stages {
+        stage('Pipeline Execution Check') {
+            when {
+                expression { return !params.RUN_PIPELINE }
+            }
+            steps {
+                script {
+                   echo "RUN_PIPELINE is set to false. Aborting build."
+                   currentBuild.result = 'ABORTED'
+                   error("Pipeline execution was skipped by user.")
+                  }
+             }
+        }
+        stage('Git Checkout') {
+           steps {
+              checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: params.GIT_CREDENTIALS,
+                    url: 'https://github.com/dinesh-4136/vprofile-project.git'
+                 ]]
+               )
+            }
+        }
+        stage('Maven Build') {
+            steps {
+                echo "Running Maven Goal: ${params.MAVEN_GOAL}"
+                sh "mvn clean ${params.MAVEN_GOAL}"
+            }
+        }
+        stage('Code Analysis with SonarQube') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh '''
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=vprofile \
+                        -Dsonar.projectName=vprofile-repo \
+                        -Dsonar.projectVersion=1.0 \
+                        -Dsonar.sources=src/ \
+                        -Dsonar.java.binaries=target/classes \
+                        -Dsonar.junit.reportsPath=target/surefire-reports/ \
+                        -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+                        -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml
+                    '''
+                }
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        stage('Upload Artifact to Nexus') {
+           when {
+              expression { return params.UPLOAD_TO_NEXUS }
+           }
+           steps {
+              nexusArtifactUploader(
+                 nexusVersion: "${NEXUS_VERSION}",
+                 protocol: "${NEXUS_PROTOCOL}",
+                 nexusUrl: "${NEXUS_URL}",
+                 version: "${ARTVERSION}",
+                 groupId: "com.myapp",
+                 repository: "${NEXUS_REPOSITORY}",
+                 credentialsId: "${NEXUS_CREDENTIAL_ID}",
+                 artifacts: [[
+                    artifactId: "vprofile",
+                    classifier: "",
+                    file: "target/vprofile-v2.war",
+                    type: "war"
+                  ]]
+               )
+            }
+        }
+        stage('Docker Build') {
+            steps {
+                echo "Building Docker image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ."
+            }
+        }
+        stage('Trivy Docker Image Scan') {
+            steps {
+                echo "Scanning Docker image with Trivy: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                sh '''
+                    IMAGE_NAME="${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                    echo "Scanning image: $IMAGE_NAME"
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v $HOME/.cache/trivy:/root/.cache/ \
+                        -v $WORKSPACE:/app \
+                        aquasec/trivy:latest \
+                        image --exit-code 0 --severity CRITICAL,HIGH \
+                        -f json -o /app/trivy-report.json \
+                        "$IMAGE_NAME"
+                '''
+                sh 'ls -lh trivy-report.json'
+            }
+        }
+        stage('Docker Push to DockerHub') {
+           steps {
+              script {
+                 echo "Logging into Docker Registry and pushing image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                 docker.withRegistry('https://index.docker.io/v1/', params.DOCKERHUB_CREDENTIALS) {
+                    def image = docker.build("${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
+                    image.push()
+                   }
+               }
+           }
+       }
+    }
+    post {
+        always {
+            echo 'Archiving Trivy report and sending Slack notification...'
+            archiveArtifacts artifacts: 'trivy-report.json'
+
+            slackSend (
+                channel: '#devops-aws-jenkins',
+                color: currentBuild.currentResult == 'SUCCESS' ? 'good' : 'danger',
+                message: """\
+                    *${currentBuild.currentResult}*: Job <${env.BUILD_URL}|${env.JOB_NAME} #${env.BUILD_NUMBER}*
+                    *Branch*: ${env.GIT_BRANCH ?: 'N/A'}
+                    *Commit*: ${env.GIT_COMMIT ?: 'N/A'}
+                    *Duration*: ${currentBuild.durationString}
+                    *Details*: <${env.BUILD_URL}|Click to view console log>
+                    """.stripIndent()
+            )
+        }
+    }
+}
