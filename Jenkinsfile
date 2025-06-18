@@ -42,7 +42,7 @@ pipeline {
             }
         }
 
-        stage('Code Quality with Sonar') {
+        stage('Code Analysis with SonarQube') {
             steps {
                 withSonarQubeEnv('sonar') {
                     sh 'mvn sonar:sonar'
@@ -81,14 +81,14 @@ pipeline {
             }
         }
 
-        stage('Docker Build') {
+        stage('Docker Image Build') {
             steps {
                 echo "Building Docker image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
                 sh "docker build -t ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} ."
             }
         }
 
-        stage('Trivy Image Scan') {
+        stage('Docker Image Scan with Trivy') {
             steps {
                 echo "Scanning Docker image with Trivy: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
                 sh '''
@@ -107,7 +107,7 @@ pipeline {
             }
         }
         
-        stage('Docker Push') {
+        stage('Docker Push to DockerHub') {
             steps {
                 script {
                     echo "Logging into Docker Registry and pushing image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
