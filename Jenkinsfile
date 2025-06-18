@@ -45,15 +45,15 @@ pipeline {
         stage('Code Quality with Sonar') {
             steps {
                 withSonarQubeEnv('sonar') {
-                    // sh 'mvn sonar:sonar'
-		    sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
-                   -Dsonar.projectName=vprofile-repo \
-                   -Dsonar.projectVersion=1.0 \
-                   -Dsonar.sources=src/ \
-                   -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
-                   -Dsonar.junit.reportsPath=target/surefire-reports/ \
-                   -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
+                    sh 'mvn sonar:sonar'
+		    // sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
+            //       -Dsonar.projectName=vprofile-repo \
+            //       -Dsonar.projectVersion=1.0 \
+            //       -Dsonar.sources=src/ \
+            //       -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
+            //       -Dsonar.junit.reportsPath=target/surefire-reports/ \
+            //       -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+            //       -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml''' 
                 }
                 timeout(time: 10, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
@@ -115,6 +115,26 @@ pipeline {
                         def image = docker.build("${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}")
                         image.push()
                     }
+                }
+            }
+        }
+        
+        stage('Deploy to EKS') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-credentials', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh '''
+                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                        export AWS_DEFAULT_REGION=ap-south-1
+
+                        echo "Setting up KUBECONFIG for EKS cluster..."
+                        aws eks update-kubeconfig --region ap-south-1 --name my-cluster
+
+                        echo "Deploying to Amazon EKS..."
+                        sed -i "s|image: .*|image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}|g" k8s/deployment.yaml
+
+                        kubectl apply -f k8s/
+                    '''
                 }
             }
         }
