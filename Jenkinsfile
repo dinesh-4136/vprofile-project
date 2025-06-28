@@ -9,7 +9,7 @@ pipeline {
     environment {
         NEXUS_VERSION        = "nexus3"
         NEXUS_PROTOCOL       = "http"
-        NEXUS_URL            = "34.93.214.142:8081"
+        NEXUS_URL            = "34.100.237.109:8081"
         NEXUS_REPOSITORY     = "artifact-hub"
         NEXUS_CREDENTIAL_ID  = "Nexus-Cred"
         ARTVERSION           = "${BUILD_ID}"
@@ -49,14 +49,14 @@ pipeline {
                 }
             }
         }
-    /*    stage('Upload Artifact to Nexus') {
+        stage('Upload Artifact to Nexus') {
             steps {
                 nexusArtifactUploader(
                     nexusVersion: "${NEXUS_VERSION}",
                     protocol: "${NEXUS_PROTOCOL}",
                     nexusUrl: "${NEXUS_URL}",
                     version: "${ARTVERSION}",
-                    groupId: "com",
+                    groupId: "gcp",
                     repository: "${NEXUS_REPOSITORY}",
                     credentialsId: "${NEXUS_CREDENTIAL_ID}",
                     artifacts: [[
@@ -68,7 +68,6 @@ pipeline {
                 )
             }
         }   
-    */
         stage("Docker Image Build") {
             steps {
                 echo "Building Docker Image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
@@ -120,7 +119,20 @@ pipeline {
     }
     post {
         always {
+            echo 'Archiving Trivy report and sending Slack notification...'
             archiveArtifacts artifacts: 'trivy-report.json'
+
+            slackSend (
+                channel: 'gcp-deployment',
+                color: currentBuild.currentResult == 'SUCCESS' ? 'good' : 'danger',
+                message: """\
+                    *${currentBuild.currentResult}*: Job <${env.BUILD_URL}|${env.JOB_NAME} #${env.BUILD_NUMBER}*
+                    *Branch*: ${env.GIT_BRANCH ?: 'N/A'}
+                    *Commit*: ${env.GIT_COMMIT ?: 'N/A'}
+                    *Duration*: ${currentBuild.durationString}
+                    *Details*: <${env.BUILD_URL}|Click to view console log>
+                    """.stripIndent()
+            )
         }
     }
 }
