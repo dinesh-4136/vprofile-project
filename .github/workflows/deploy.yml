@@ -42,8 +42,8 @@ jobs:
           uses: aws-actions/configure-aws-credentials@v4
           with:
             aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-            aws-secret-access-key: ${{ secrets.AWS_SECRETS_ACESS_KEY }}
-            aws-region: ${{ env.AWS_REGION }}
+            aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+            aws-region: $AWS_REGION
 
         - name: Login to Amazon ECR
           id: login-ecr
@@ -51,8 +51,8 @@ jobs:
 
         - name: Build and Tag Docker Image
           run: |
-            docker build -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} .
-            docker tag ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+            docker tag $ECR_REPOSITORY:$IMAGE_TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
 
         - name: Insatll Trivy
           run: |
@@ -61,7 +61,7 @@ jobs:
         
         - name: Trivy Image Scan
           run: |
-            IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            IMAGE=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
             trivy image --exit-code 1 --severity CRITICAL,HIGH --format table $IMAGE
 
         - name: Trivy JSON Report
@@ -77,7 +77,7 @@ jobs:
 
         - name: Push Docker Image to ECR
           run: |
-            docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
 
         - name: Output Image URL
           run: echo "Pushed to ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG"
