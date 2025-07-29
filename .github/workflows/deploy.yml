@@ -61,7 +61,7 @@ jobs:
         - name: Trivy Image Scan
           run: |
             IMAGE=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
-            trivy image --exit-code 0 --severity CRITICAL,HIGH --format table --scanners vuln --skip-db-update $IMAGE
+            trivy image --scanners vuln --vuln-type os --skip-db-update --exit-code 0 --format table $IMAGE
 
         - name: Trivy JSON Report
           run: |
