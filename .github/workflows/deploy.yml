@@ -29,6 +29,15 @@ jobs:
           run: mvn -B package --file pom.xml
 
         - name: Run tests with Maven
+          run: mvn test
+
+        - name: Upload JAR artifact
+          uses: actions/upload-artifact@v4
+          with:
+            name: java-app
+            path: target/*.jar
+
+        - name: Run SonarQube Analysis
           env:
             SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           run: |
