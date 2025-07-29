@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vprofile
+  namespace: vprofile
   labels:
     app: vprofile
 spec:
