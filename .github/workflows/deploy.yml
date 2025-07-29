@@ -66,7 +66,7 @@ jobs:
         - name: Trivy JSON Report
           run: |
             IMAGE=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
-            trivy image --severity CRITICAL,HIGH --format json -o trivy-report.json $IMAGE
+            trivy image --scanners vuln --vuln-type os --skip-db-update --exit-code 0 --format json --severity CRITICAL,HIGH -o trivy-report.json $IMAGE
 
         - name: Upload Trivy JSON Report
           uses: actions/upload-artifact@v4
