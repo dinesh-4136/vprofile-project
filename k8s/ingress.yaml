@@ -8,7 +8,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: myapp.vprofile.com
+  - host: add2d85891e0747068c965b45e94d103-12c18388362b3178.elb.us-east-1.amazonaws.com
     http:
       paths:
       - path: /vprofile
