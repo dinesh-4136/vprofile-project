@@ -1,10 +1,11 @@
+# vprofile-service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: vprofile-service
   namespace: vprofile
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: vprofile
   ports:
