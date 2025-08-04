@@ -31,11 +31,11 @@ jobs:
         - name: Run tests with Maven
           run: mvn test
 
-        - name: Upload JAR artifact
+        - name: Upload WAR artifact
           uses: actions/upload-artifact@v4
           with:
             name: java-app
-            path: target/*.jar
+            path: target/*.war
 
         - name: Run SonarQube Analysis
           env:
